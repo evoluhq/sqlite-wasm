@@ -30,10 +30,9 @@
  ** SQLITE_VERSION_NUMBER 3051000
  ** SQLITE_SOURCE_ID "2025-11-04 19:38:17 fb2c931ae597f8d00a37574ff67aeed3eced4e5547f9120744ae4bfa8e74527b"
  **
- ** Emscripten SDK: 4.0.12
+ ** Emscripten SDK: 4.0.10
  **
  */
-
 var sqlite3InitModule = (() => {
   var _scriptName =
     typeof document != 'undefined' ? document.currentScript?.src : undefined;
@@ -339,7 +338,7 @@ var sqlite3InitModule = (() => {
     }
 
     async function instantiateAsync(binary, binaryFile, imports) {
-      if (!binary) {
+      if (!binary && typeof WebAssembly.instantiateStreaming == 'function') {
         try {
           var response = fetch(binaryFile, { credentials: 'same-origin' });
           var instantiationResult = await WebAssembly.instantiateStreaming(
@@ -601,21 +600,11 @@ var sqlite3InitModule = (() => {
 
     var UTF8Decoder = new TextDecoder();
 
-    var findStringEnd = (heapOrArray, idx, maxBytesToRead, ignoreNul) => {
-      var maxIdx = idx + maxBytesToRead;
-      if (ignoreNul) return maxIdx;
+    var UTF8ArrayToString = (heapOrArray, idx = 0, maxBytesToRead = NaN) => {
+      var endIdx = idx + maxBytesToRead;
+      var endPtr = idx;
 
-      while (heapOrArray[idx] && !(idx >= maxIdx)) ++idx;
-      return idx;
-    };
-
-    var UTF8ArrayToString = (
-      heapOrArray,
-      idx = 0,
-      maxBytesToRead,
-      ignoreNul,
-    ) => {
-      var endPtr = findStringEnd(heapOrArray, idx, maxBytesToRead, ignoreNul);
+      while (heapOrArray[endPtr] && !(endPtr >= endIdx)) ++endPtr;
 
       return UTF8Decoder.decode(
         heapOrArray.buffer
@@ -1000,11 +989,6 @@ var sqlite3InitModule = (() => {
           }
         },
         lookup(parent, name) {
-          if (!MEMFS.doesNotExistError) {
-            MEMFS.doesNotExistError = new FS.ErrnoError(44);
-
-            MEMFS.doesNotExistError.stack = '<generic error, no stack>';
-          }
           throw MEMFS.doesNotExistError;
         },
         mknod(parent, name, mode, dev) {
@@ -1383,8 +1367,6 @@ var sqlite3InitModule = (() => {
               current_path = PATH.dirname(current_path);
               if (FS.isRoot(current)) {
                 path = current_path + '/' + parts.slice(i + 1).join('/');
-
-                nlinks--;
                 continue linkloop;
               } else {
                 current = current.parent;
@@ -2871,9 +2853,10 @@ var sqlite3InitModule = (() => {
       },
     };
 
-    var UTF8ToString = (ptr, maxBytesToRead, ignoreNul) => {
+    var UTF8ToString = (ptr, maxBytesToRead) => {
       if (!ptr) return '';
-      var end = findStringEnd(HEAPU8, ptr, maxBytesToRead, ignoreNul);
+      var maxPtr = ptr + maxBytesToRead;
+      for (var end = ptr; !(end >= maxPtr) && HEAPU8[end]; ) ++end;
       return UTF8Decoder.decode(HEAPU8.subarray(ptr, end));
     };
     var SYSCALLS = {
@@ -2922,15 +2905,15 @@ var sqlite3InitModule = (() => {
       },
       writeStatFs(buf, stats) {
         HEAP32[(buf + 4) >> 2] = stats.bsize;
-        HEAP32[(buf + 60) >> 2] = stats.bsize;
-        HEAP64[(buf + 8) >> 3] = BigInt(stats.blocks);
-        HEAP64[(buf + 16) >> 3] = BigInt(stats.bfree);
-        HEAP64[(buf + 24) >> 3] = BigInt(stats.bavail);
-        HEAP64[(buf + 32) >> 3] = BigInt(stats.files);
-        HEAP64[(buf + 40) >> 3] = BigInt(stats.ffree);
-        HEAP32[(buf + 48) >> 2] = stats.fsid;
-        HEAP32[(buf + 64) >> 2] = stats.flags;
-        HEAP32[(buf + 56) >> 2] = stats.namelen;
+        HEAP32[(buf + 40) >> 2] = stats.bsize;
+        HEAP32[(buf + 8) >> 2] = stats.blocks;
+        HEAP32[(buf + 12) >> 2] = stats.bfree;
+        HEAP32[(buf + 16) >> 2] = stats.bavail;
+        HEAP32[(buf + 20) >> 2] = stats.files;
+        HEAP32[(buf + 24) >> 2] = stats.ffree;
+        HEAP32[(buf + 28) >> 2] = stats.fsid;
+        HEAP32[(buf + 44) >> 2] = stats.flags;
+        HEAP32[(buf + 36) >> 2] = stats.namelen;
       },
       doMsync(addr, stream, len, flags, offset) {
         if (!FS.isFile(stream.node.mode)) {
@@ -3170,7 +3153,6 @@ var sqlite3InitModule = (() => {
             if (!stream.tty) return -59;
             return -28;
           }
-          case 21537:
           case 21531: {
             var argp = syscallGetVarargP();
             return FS.ioctl(stream, op, argp);
@@ -3358,6 +3340,8 @@ var sqlite3InitModule = (() => {
       }
     }
 
+    var __abort_js = () => abort('');
+
     var isLeapYear = (year) =>
       year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
 
@@ -3500,8 +3484,8 @@ var sqlite3InitModule = (() => {
     var _emscripten_get_heap_max = () => getHeapMax();
 
     var growMemory = (size) => {
-      var oldHeapSize = wasmMemory.buffer.byteLength;
-      var pages = ((size - oldHeapSize + 65535) / 65536) | 0;
+      var b = wasmMemory.buffer;
+      var pages = ((size - b.byteLength + 65535) / 65536) | 0;
       try {
         wasmMemory.grow(pages);
         updateMemoryViews();
@@ -3594,6 +3578,24 @@ var sqlite3InitModule = (() => {
       HEAPU32[penviron_buf_size >> 2] = bufSize;
       return 0;
     };
+
+    var runtimeKeepaliveCounter = 0;
+    var keepRuntimeAlive = () => noExitRuntime || runtimeKeepaliveCounter > 0;
+    var _proc_exit = (code) => {
+      EXITSTATUS = code;
+      if (!keepRuntimeAlive()) {
+        Module['onExit']?.(code);
+        ABORT = true;
+      }
+      quit_(code, new ExitStatus(code));
+    };
+
+    var exitJS = (status, implicit) => {
+      EXITSTATUS = status;
+
+      _proc_exit(status);
+    };
+    var _exit = exitJS;
 
     function _fd_close(fd) {
       try {
@@ -3723,9 +3725,22 @@ var sqlite3InitModule = (() => {
       }
     }
 
+    function _random_get(buffer, size) {
+      try {
+        randomFill(HEAPU8.subarray(buffer, buffer + size));
+        return 0;
+      } catch (e) {
+        if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+        return e.errno;
+      }
+    }
+
     FS.createPreloadedFile = FS_createPreloadedFile;
     FS.staticInit();
 
+    MEMFS.doesNotExistError = new FS.ErrnoError(44);
+
+    MEMFS.doesNotExistError.stack = '<generic error, no stack>';
     {
       initMemory();
 
@@ -3751,12 +3766,13 @@ var sqlite3InitModule = (() => {
       _sqlite3_malloc,
       _sqlite3_free,
       _sqlite3_vfs_register,
+      _sqlite3_randomness,
+      _sqlite3mc_vfs_create,
       _sqlite3_vfs_unregister,
       _sqlite3_malloc64,
       _sqlite3_realloc,
       _sqlite3_realloc64,
       _sqlite3_value_text,
-      _sqlite3_randomness,
       _sqlite3_stricmp,
       _sqlite3_strnicmp,
       _sqlite3_uri_parameter,
@@ -3867,6 +3883,7 @@ var sqlite3InitModule = (() => {
       _sqlite3_libversion,
       _sqlite3_libversion_number,
       _sqlite3_shutdown,
+      _sqlite3mc_vfs_shutdown,
       _sqlite3_last_insert_rowid,
       _sqlite3_set_last_insert_rowid,
       _sqlite3_changes64,
@@ -3955,6 +3972,19 @@ var sqlite3InitModule = (() => {
       _sqlite3changeset_concat_strm,
       _sqlite3session_config,
       _sqlite3_sourceid,
+      _sqlite3mc_version,
+      _sqlite3mc_config,
+      _sqlite3mc_cipher_count,
+      _sqlite3mc_cipher_index,
+      _sqlite3mc_cipher_name,
+      _sqlite3mc_config_cipher,
+      _sqlite3mc_codec_data,
+      _sqlite3_activate_see,
+      _sqlite3_key,
+      _sqlite3_key_v2,
+      _sqlite3_rekey_v2,
+      _sqlite3_rekey,
+      _sqlite3mc_vfs_destroy,
       _sqlite3__wasm_pstack_ptr,
       _sqlite3__wasm_pstack_restore,
       _sqlite3__wasm_pstack_alloc,
@@ -4017,6 +4047,10 @@ var sqlite3InitModule = (() => {
       Module['_sqlite3_free'] = _sqlite3_free = wasmExports['sqlite3_free'];
       Module['_sqlite3_vfs_register'] = _sqlite3_vfs_register =
         wasmExports['sqlite3_vfs_register'];
+      Module['_sqlite3_randomness'] = _sqlite3_randomness =
+        wasmExports['sqlite3_randomness'];
+      Module['_sqlite3mc_vfs_create'] = _sqlite3mc_vfs_create =
+        wasmExports['sqlite3mc_vfs_create'];
       Module['_sqlite3_vfs_unregister'] = _sqlite3_vfs_unregister =
         wasmExports['sqlite3_vfs_unregister'];
       Module['_sqlite3_malloc64'] = _sqlite3_malloc64 =
@@ -4027,8 +4061,6 @@ var sqlite3InitModule = (() => {
         wasmExports['sqlite3_realloc64'];
       Module['_sqlite3_value_text'] = _sqlite3_value_text =
         wasmExports['sqlite3_value_text'];
-      Module['_sqlite3_randomness'] = _sqlite3_randomness =
-        wasmExports['sqlite3_randomness'];
       Module['_sqlite3_stricmp'] = _sqlite3_stricmp =
         wasmExports['sqlite3_stricmp'];
       Module['_sqlite3_strnicmp'] = _sqlite3_strnicmp =
@@ -4246,6 +4278,8 @@ var sqlite3InitModule = (() => {
         wasmExports['sqlite3_libversion_number'];
       Module['_sqlite3_shutdown'] = _sqlite3_shutdown =
         wasmExports['sqlite3_shutdown'];
+      Module['_sqlite3mc_vfs_shutdown'] = _sqlite3mc_vfs_shutdown =
+        wasmExports['sqlite3mc_vfs_shutdown'];
       Module['_sqlite3_last_insert_rowid'] = _sqlite3_last_insert_rowid =
         wasmExports['sqlite3_last_insert_rowid'];
       Module['_sqlite3_set_last_insert_rowid'] =
@@ -4431,6 +4465,30 @@ var sqlite3InitModule = (() => {
         wasmExports['sqlite3session_config'];
       Module['_sqlite3_sourceid'] = _sqlite3_sourceid =
         wasmExports['sqlite3_sourceid'];
+      Module['_sqlite3mc_version'] = _sqlite3mc_version =
+        wasmExports['sqlite3mc_version'];
+      Module['_sqlite3mc_config'] = _sqlite3mc_config =
+        wasmExports['sqlite3mc_config'];
+      Module['_sqlite3mc_cipher_count'] = _sqlite3mc_cipher_count =
+        wasmExports['sqlite3mc_cipher_count'];
+      Module['_sqlite3mc_cipher_index'] = _sqlite3mc_cipher_index =
+        wasmExports['sqlite3mc_cipher_index'];
+      Module['_sqlite3mc_cipher_name'] = _sqlite3mc_cipher_name =
+        wasmExports['sqlite3mc_cipher_name'];
+      Module['_sqlite3mc_config_cipher'] = _sqlite3mc_config_cipher =
+        wasmExports['sqlite3mc_config_cipher'];
+      Module['_sqlite3mc_codec_data'] = _sqlite3mc_codec_data =
+        wasmExports['sqlite3mc_codec_data'];
+      Module['_sqlite3_activate_see'] = _sqlite3_activate_see =
+        wasmExports['sqlite3_activate_see'];
+      Module['_sqlite3_key'] = _sqlite3_key = wasmExports['sqlite3_key'];
+      Module['_sqlite3_key_v2'] = _sqlite3_key_v2 =
+        wasmExports['sqlite3_key_v2'];
+      Module['_sqlite3_rekey_v2'] = _sqlite3_rekey_v2 =
+        wasmExports['sqlite3_rekey_v2'];
+      Module['_sqlite3_rekey'] = _sqlite3_rekey = wasmExports['sqlite3_rekey'];
+      Module['_sqlite3mc_vfs_destroy'] = _sqlite3mc_vfs_destroy =
+        wasmExports['sqlite3mc_vfs_destroy'];
       Module['_sqlite3__wasm_pstack_ptr'] = _sqlite3__wasm_pstack_ptr =
         wasmExports['sqlite3__wasm_pstack_ptr'];
       Module['_sqlite3__wasm_pstack_restore'] = _sqlite3__wasm_pstack_restore =
@@ -4556,6 +4614,8 @@ var sqlite3InitModule = (() => {
 
       __syscall_utimensat: ___syscall_utimensat,
 
+      _abort_js: __abort_js,
+
       _localtime_js: __localtime_js,
 
       _mmap_js: __mmap_js,
@@ -4578,6 +4638,8 @@ var sqlite3InitModule = (() => {
 
       environ_sizes_get: _environ_sizes_get,
 
+      exit: _exit,
+
       fd_close: _fd_close,
 
       fd_fdstat_get: _fd_fdstat_get,
@@ -4591,6 +4653,8 @@ var sqlite3InitModule = (() => {
       fd_write: _fd_write,
 
       memory: wasmMemory,
+
+      random_get: _random_get,
     };
     var wasmExports = await createWasm();
 
@@ -8185,6 +8249,33 @@ var sqlite3InitModule = (() => {
           ]);
         }
 
+        if (!!wasm.exports.sqlite3_key_v2) {
+          bindingSignatures.core.push(
+            ['sqlite3_key', 'int', 'sqlite3*', 'string', 'int'],
+            ['sqlite3_key_v2', 'int', 'sqlite3*', 'string', '*', 'int'],
+            ['sqlite3_rekey', 'int', 'sqlite3*', 'string', 'int'],
+            ['sqlite3_rekey_v2', 'int', 'sqlite3*', 'string', '*', 'int'],
+            ['sqlite3_activate_see', undefined, 'string'],
+            ['sqlite3mc_cipher_count', 'int'],
+            ['sqlite3mc_cipher_index', 'int', 'string'],
+            ['sqlite3mc_cipher_name', 'string', 'int'],
+            ['sqlite3mc_config', 'int', 'sqlite3*', 'string', 'int'],
+            [
+              'sqlite3mc_config_cipher',
+              'int',
+              'sqlite3*',
+              'string',
+              'string',
+              'int',
+            ],
+            ['sqlite3mc_codec_data', 'string', 'sqlite3*', 'string', 'string'],
+            ['sqlite3mc_version', 'string'],
+            ['sqlite3mc_vfs_create', 'int', 'string', 'int'],
+            ['sqlite3mc_vfs_destroy', undefined, 'string'],
+            ['sqlite3mc_vfs_shutdown', undefined],
+          );
+        }
+
         if (wasm.bigIntEnabled && !!wasm.exports.sqlite3_declare_vtab) {
           bindingSignatures.int64.push(
             [
@@ -9942,6 +10033,90 @@ var sqlite3InitModule = (() => {
 
         const __vfsPostOpenCallback = Object.create(null);
 
+        const byteArrayToHex = function (ba) {
+          if (ba instanceof ArrayBuffer) {
+            ba = new Uint8Array(ba);
+          }
+          const li = [];
+          const digits = '0123456789abcdef';
+          for (const d of ba) {
+            li.push(digits[(d & 0xf0) >> 4], digits[d & 0x0f]);
+          }
+          return li.join('');
+        };
+
+        const dbCtorApplySEEKey = function (db, opt) {
+          if (!capi.sqlite3_key_v2) return;
+          let keytype;
+          let key;
+          const check =
+            (opt.key ? 1 : 0) + (opt.hexkey ? 1 : 0) + (opt.textkey ? 1 : 0);
+          if (!check) return;
+          else if (check > 1) {
+            toss3(
+              capi.SQLITE_MISUSE,
+              'Only ONE of (key, hexkey, textkey) may be provided.',
+            );
+          }
+          if (opt.key) {
+            keytype = 'key';
+            key = opt.key;
+            if ('string' === typeof key) {
+              key = new TextEncoder('utf-8').encode(key);
+            }
+            if (key instanceof ArrayBuffer || key instanceof Uint8Array) {
+              key = byteArrayToHex(key);
+              keytype = 'hexkey';
+            } else {
+              toss3(
+                capi.SQLITE_MISUSE,
+                "Invalid value for the 'key' option. Expecting a string,",
+                'ArrayBuffer, or Uint8Array.',
+              );
+              return;
+            }
+          } else if (opt.textkey) {
+            keytype = 'textkey';
+            key = opt.textkey;
+            if (key instanceof ArrayBuffer) {
+              key = new Uint8Array(key);
+            }
+            if (key instanceof Uint8Array) {
+              key = new TextDecoder('utf-8').decode(key);
+            } else if ('string' !== typeof key) {
+              toss3(
+                capi.SQLITE_MISUSE,
+                "Invalid value for the 'textkey' option. Expecting a string,",
+                'ArrayBuffer, or Uint8Array.',
+              );
+            }
+          } else if (opt.hexkey) {
+            keytype = 'hexkey';
+            key = opt.hexkey;
+            if (key instanceof ArrayBuffer || key instanceof Uint8Array) {
+              key = byteArrayToHex(key);
+            } else if ('string' !== typeof key) {
+              toss3(
+                capi.SQLITE_MISUSE,
+                "Invalid value for the 'hexkey' option. Expecting a string,",
+                'ArrayBuffer, or Uint8Array.',
+              );
+            }
+          } else {
+            return;
+          }
+          let stmt;
+          try {
+            stmt = db.prepare(
+              'PRAGMA ' + keytype + '=' + util.sqlite3__wasm_qfmt_token(key, 1),
+            );
+            stmt.step();
+            return true;
+          } finally {
+            if (stmt) stmt.finalize();
+          }
+        };
+
         const dbCtorHelper = function ctor(...args) {
           if (!ctor._name2vfs) {
             ctor._name2vfs = Object.create(null);
@@ -10034,6 +10209,8 @@ var sqlite3InitModule = (() => {
           __stmtMap.set(this, Object.create(null));
           if (!opt['sqlite3*']) {
             try {
+              dbCtorApplySEEKey(this, opt);
+
               const pVfs =
                 capi.sqlite3_js_db_vfs(pDb) ||
                 toss3('Internal error: cannot get VFS for new db handle.');
@@ -13785,7 +13962,6 @@ var sqlite3InitModule = (() => {
     return moduleRtn;
   };
 })();
-
 if (typeof exports === 'object' && typeof module === 'object') {
   module.exports = sqlite3InitModule;
 

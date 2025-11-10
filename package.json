@@ -1,6 +1,6 @@
 {
   "name": "@evolu/sqlite-wasm",
-  "version": "2.2.4",
+  "version": "2.2.5",
   "description": "SQLite Wasm conveniently wrapped as an ES Module. (Multiple Ciphers Support)",
   "keywords": [
     "sqlite",
