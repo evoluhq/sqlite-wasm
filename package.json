@@ -1,13 +1,18 @@
 {
-  "name": "@sqlite.org/sqlite-wasm",
-  "version": "3.51.0-build1",
-  "description": "SQLite Wasm conveniently wrapped as an ES Module.",
+  "name": "@evolu/sqlite-wasm",
+  "version": "2.2.4",
+  "description": "SQLite Wasm conveniently wrapped as an ES Module. (Multiple Ciphers Support)",
   "keywords": [
     "sqlite",
     "sqlite3",
     "sqlite-wasm",
     "sqlite3-wasm",
+    "sqlite-wasm-cipher",
+    "sqlite3-multiple-ciphers",
+    "encrypted-sqlite",
     "webassembly",
+    "cipher",
+    "evolu",
     "wasm",
     "esm",
     "opfs",
@@ -50,14 +55,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sqlite/sqlite-wasm.git"
+    "url": "git+https://github.com/evoluhq/sqlite-wasm-cipher.git"
   },
-  "author": "Thomas Steiner (tomac@google.com)",
+  "author": "EvoluHQ",
   "license": "Apache-2.0",
   "bugs": {
-    "url": "https://github.com/sqlite/sqlite-wasm/issues"
+    "url": "https://github.com/evoluhq/sqlite-wasm-cipher/issues"
   },
-  "homepage": "https://github.com/sqlite/sqlite-wasm#readme",
+  "homepage": "https://github.com/evoluhq/sqlite-wasm-cipher#readme",
   "devDependencies": {
     "decompress": "^4.2.1",
     "http-server": "github:vapier/http-server",
