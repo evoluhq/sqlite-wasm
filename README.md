@@ -1,6 +1,12 @@
 # SQLite Wasm
 
-[![npm version](https://img.shields.io/npm/v/@evolu/sqlite-wasm.svg)](https://www.npmjs.com/package/@evolu/sqlite-wasm)
+> [!Important]
+>
+> This repository is archived. It holds the source of `@evolu/sqlite-wasm`
+> 2.2.4 and earlier. Later versions are built in the
+> [Evolu repository](https://github.com/evoluhq/evolu/tree/main/packages/sqlite-wasm):
+> plain SQLite compiled by Evolu, with Evolu's own TypeScript layer and
+> encryption.
 
 > Note: This project is a fork of
 > [SQLite Wasm](https://github.com/sqlite/sqlite-wasm) that uses
